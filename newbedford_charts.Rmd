@@ -1,0 +1,100 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r setup}
+library(rgdal)
+library(gdalUtilities)
+library(data.table)
+library(here)
+library(raster)
+library(ggmap)
+```
+
+Pull in NOAA Layers
+
+```{r pull in raster}
+#NY approach
+gdalwarp(srcfile = here::here("layers","12300","12300_1.KAP"), dstfile = here::here("layers","12300","12300_1.tif"))
+
+NOAA_12300 <- raster(here::here("layers","12300","12300_1.tif"))
+
+#full northeast US
+gdalwarp(srcfile = here::here("layers","13003","13003_1.KAP"), dstfile = here::here("layers","13003","13003_1.tif"))
+
+NOAA_13003 <- raster(here::here("layers","13003","13003_1.tif"))
+
+#what is coordinate system?
+crs(NOAA_12300)
+crs(NOAA_13003)
+```
+
+Pull in VTR data to put on map
+
+```{r read in VTR data}
+### Read in VTR Data
+new_df0 <- data.table(readRDS(here::here("data","CaS.commercial_all_port_land19952017.RDS")))
+
+new_df0[,"comm":=gsub("-.*", "", community)] #retrieve port from community column (for excluding NA communities later)
+```
+
+Pull out only New Bedford 
+```{r}
+#which communities are in new bedford
+communities <- unique(new_df0[,community])
+new_bedford_communities <- communities[grepl("new.bedford*",communities)]
+
+#pull only these communities from full vtr data
+new_bedford_vtr <- new_df0[community %in% new_bedford_communities,]
+new_bedford_vtr[,geargroup := gsub("-", "_", geargroup)]
+
+rm(new_df0)
+```
+
+Map using ggmap, all types of fishing
+```{r ggmap}
+densityplot_fishing <- qmplot(x=declon, y=declat, 
+                             data = new_bedford_vtr, 
+                             geom = "blank",
+                             maptype = "toner-background", 
+                             darken = .7, 
+                             legend = "topright") + stat_density_2d(aes(fill = ..level..), 
+                  geom = "polygon", 
+                  alpha = .5,
+                  color = NA) + scale_fill_gradient2(low = "blue", 
+                       mid = "green", 
+                       high = "red")
+```
+How to find inner 95% of data points?
+```{r ggmap dredge only }
+#start with just one community
+
+densityplot_fishing <- ggplot() +
+  geom_raster(data = NOAA_12300)
+x=declon, y=declat, 
+                             data = new_bedford_vtr[community == "new.bedford_ma-dredge"]) + stat_density_2d(data = new_bedford_vtr[community == "new.bedford_ma-dredge", aes(x=declon, y=declat, fill = ..level..), 
+                  geom = "polygon", 
+                  alpha = .5,
+                  color = NA) + scale_fill_gradient2(low = "blue", 
+                       mid = "green", 
+                       high = "red"))
+```
+
+Base R
+```{r}
+plot(NOAA_13003)
+#points to spdf
+new.bedford_ma_dredge <- new_bedford_vtr[geargroup == "dredge",]
+
+new.bedford_ma_dredge.spdf <- SpatialPointsDataFrame(coords = new.bedford_ma_dredge[,.(declon, declat)], data = new.bedford_ma_dredge, proj4string = crs("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+
+#match crs
+new.bedford_ma_dredge.spdf.transformed <- spTransform(new.bedford_ma_dredge.spdf, crs(NOAA_13003))
+
+plot(NOAA_13003)
+plot(new.bedford_ma_dredge.spdf.transformed, cex = 0.5, pch = 16, add = T)
+
+#this plot is too small, try with another plot
+
+```
+
